@@ -50,44 +50,73 @@ def valeur_upcard(carte):
 def carte_str(c):
     return f"{c[0]} {c[1]}"
 
-# ===== Fenêtre Carte de stratégie (lisibilité ++, axes, tooltip) =====
+# ===== Fenêtre Carte de stratégie (axes propres, légende externe) =====
 class PolicyWindow(tk.Toplevel):
     def __init__(self, master, policy: BlackjackQLPolicy):
         super().__init__(master)
         self.title("Carte de stratégie du bot (Q-learning)")
         self.policy = policy
-        self.cell = 36               # cellules plus grandes
-        self.pad = 40                # marge pour axes visibles
-        self.font_cell = ("Arial", 12, "bold")
+
+        # géométrie/typos
+        self.cell = 36               # taille cellule
+        self.pad_x = 42              # marge horizontale pour chiffres des axes
+        self.pad_y = 56              # marge verticale pour chiffres des axes
+        self.font_cell = ("Arial", 13, "bold")
         self.font_axis = ("Arial", 11)
         self.bg = "white"
 
+        # entête explicatif
         header = tk.Label(
             self,
-            text=("Grille gauche = main DURE | Grille droite = main SOFT\n"
-                  "Colonnes = upcard croupier : 2 3 4 5 6 7 8 9 10 A  |  "
-                  "Lignes = total joueur : 4 → 21\n"
-                  "Couleur: Rouge = HIT, Vert = RESTER. Cliquer/Survoler une case = Q-valeurs."),
+            text=("Grille gauche = main DURE  |  Grille droite = main SOFT\n"
+                  "Colonnes (haut/bas) : upcard croupier  2 3 4 5 6 7 8 9 10 A\n"
+                  "Lignes (gauche/droite) : total joueur  4 → 21\n"
+                  "Couleur: Rouge = HIT,  Vert = RESTER.  Survol/Clic = Q-valeurs."),
             justify="center"
         )
-        header.pack(pady=6)
+        header.pack(pady=(8, 4))
 
-        wrap = tk.Frame(self)
-        wrap.pack(padx=8, pady=8)
+        # conteneur des 2 grilles
+        grids = tk.Frame(self)
+        grids.pack(padx=10, pady=6)
 
-        w = self.cell*11 + self.pad*2
-        h = self.cell*18 + self.pad*2
-        self.canvas_hard = tk.Canvas(wrap, width=w, height=h, bg=self.bg, highlightthickness=1, highlightbackground="#ccc")
-        self.canvas_soft = tk.Canvas(wrap, width=w, height=h, bg=self.bg, highlightthickness=1, highlightbackground="#ccc")
-        self.canvas_hard.grid(row=0, column=0, padx=10)
-        self.canvas_soft.grid(row=0, column=1, padx=10)
+        # --- HARD ---
+        left = tk.Frame(grids)
+        left.grid(row=0, column=0, padx=10)
+        tk.Label(left, text="HARD (main dure)", font=("Arial", 12, "bold")).pack(pady=(0,4))
+        w = self.cell*11 + self.pad_x*2
+        h = self.cell*18 + self.pad_y*2
+        self.canvas_hard = tk.Canvas(left, width=w, height=h, bg=self.bg,
+                                     highlightthickness=1, highlightbackground="#cfcfcf")
+        self.canvas_hard.pack()
 
-        self.info = tk.Label(self, text="Q(RESTER)=..., Q(HIT)=...", font=("Consolas", 11))
+        # --- SOFT ---
+        right = tk.Frame(grids)
+        right.grid(row=0, column=1, padx=10)
+        tk.Label(right, text="SOFT (main soft)", font=("Arial", 12, "bold")).pack(pady=(0,4))
+        self.canvas_soft = tk.Canvas(right, width=w, height=h, bg=self.bg,
+                                     highlightthickness=1, highlightbackground="#cfcfcf")
+        self.canvas_soft.pack()
+
+        # légende (en dehors des canvas)
+        legend = tk.Frame(self)
+        legend.pack(pady=(8, 2))
+        tk.Label(legend, text="RESTER").grid(row=0, column=0, padx=(0,4))
+        swatch_s = tk.Canvas(legend, width=22, height=14, bg="#45a049", highlightthickness=0)
+        swatch_s.grid(row=0, column=1, padx=(0,12))
+        tk.Label(legend, text="HIT").grid(row=0, column=2, padx=(0,4))
+        swatch_h = tk.Canvas(legend, width=22, height=14, bg="#d84a4a", highlightthickness=0)
+        swatch_h.grid(row=0, column=3)
+
+        # zone d'info (tooltip)
+        self.info = tk.Label(self, text="Q(RESTER)=...,  Q(HIT)=...", font=("Consolas", 11))
         self.info.pack(pady=(4,10))
 
-        self._draw_grid(self.canvas_hard, soft=False, title="HARD (main dure)")
-        self._draw_grid(self.canvas_soft, soft=True,  title="SOFT (main soft)")
+        # dessiner les deux grilles
+        self._draw_grid(self.canvas_hard, soft=False)
+        self._draw_grid(self.canvas_soft, soft=True)
 
+    # ---- helpers Q/action
     def _action_for(self, total, up, soft):
         state = (total, up, bool(soft))
         q0 = self.policy.Q.get((state,0), 0.0)  # RESTER
@@ -95,43 +124,37 @@ class PolicyWindow(tk.Toplevel):
         action = 1 if q1 > q0 else 0
         return action, q0, q1
 
-    def _draw_axes(self, canvas, title):
+    # ---- axes + cellules
+    def _draw_axes(self, canvas):
         W = int(canvas["width"]); H = int(canvas["height"])
-        # Titre
-        canvas.create_text(W/2, 16, text=title, font=("Arial", 12, "bold"))
-        # Axes
-        up_labels = ["2","3","4","5","6","7","8","9","10","A"," "]
-        for j, lab in enumerate(up_labels[:-1]):  # 11 colonnes (2..A)
-            x = self.pad + j*self.cell + self.cell/2
-            canvas.create_text(x, self.pad-14, text=lab, font=self.font_axis)   # haut
-            canvas.create_text(x, H-self.pad+14, text=lab, font=self.font_axis) # bas
-        for i, tot in enumerate(range(4, 22)):  # 18 lignes (4..21)
-            y = self.pad + i*self.cell + self.cell/2
-            canvas.create_text(self.pad-18, y, text=str(tot), font=self.font_axis)            # gauche
-            canvas.create_text(W-self.pad+18, y, text=str(tot), font=self.font_axis)          # droite
-
-        # cadre et grilles
-        canvas.create_rectangle(self.pad, self.pad, W-self.pad, H-self.pad, outline="#888")
+        # cadre des données
+        canvas.create_rectangle(self.pad_x, self.pad_y, W-self.pad_x, H-self.pad_y, outline="#8a8a8a")
+        # lignes de grille
         for j in range(1, 11):
-            x = self.pad + j*self.cell
-            canvas.create_line(x, self.pad, x, H-self.pad, fill="#eee")
+            x = self.pad_x + j*self.cell
+            canvas.create_line(x, self.pad_y, x, H-self.pad_y, fill="#eeeeee")
         for i in range(1, 18):
-            y = self.pad + i*self.cell
-            canvas.create_line(self.pad, y, W-self.pad, y, fill="#eee")
+            y = self.pad_y + i*self.cell
+            canvas.create_line(self.pad_x, y, W-self.pad_x, y, fill="#eeeeee")
+        # étiquettes colonnes (haut/bas)
+        up_labels = ["2","3","4","5","6","7","8","9","10","A"," "]
+        for j, lab in enumerate(up_labels[:-1]):  # 11 colonnes
+            x = self.pad_x + j*self.cell + self.cell/2
+            canvas.create_text(x, self.pad_y-18, text=lab, font=self.font_axis)
+            canvas.create_text(x, H-self.pad_y+18, text=lab, font=self.font_axis)
+        # étiquettes lignes (gauche/droite)
+        for i, tot in enumerate(range(4, 22)):  # 18 lignes
+            y = self.pad_y + i*self.cell + self.cell/2
+            canvas.create_text(self.pad_x-18, y, text=str(tot), font=self.font_axis)
+            canvas.create_text(W-self.pad_x+18, y, text=str(tot), font=self.font_axis)
 
-        # légende
-        canvas.create_rectangle(W-180, 22, W-20, 42, fill="#45a049", outline="#333")
-        canvas.create_text(W-205, 32, text="RESTER", anchor="e", font=("Arial",10))
-        canvas.create_rectangle(W-180, 46, W-20, 66, fill="#d84a4a", outline="#333")
-        canvas.create_text(W-205, 56, text="HIT", anchor="e", font=("Arial",10))
+    def _draw_grid(self, canvas, soft: bool):
+        self._draw_axes(canvas)
 
-    def _draw_grid(self, canvas, soft: bool, title=""):
-        self._draw_axes(canvas, title)
-        # cellules
         for i, tot in enumerate(range(4, 22)):
             for j, up in enumerate(range(2, 12)):
-                x0 = self.pad + j*self.cell
-                y0 = self.pad + i*self.cell
+                x0 = self.pad_x + j*self.cell
+                y0 = self.pad_y + i*self.cell
                 x1 = x0 + self.cell
                 y1 = y0 + self.cell
 
@@ -139,10 +162,9 @@ class PolicyWindow(tk.Toplevel):
                 color = "#d84a4a" if action == 1 else "#45a049"   # rouge = HIT, vert = RESTER
                 letter = "H" if action == 1 else "S"
 
-                rect = canvas.create_rectangle(x0+1, y0+1, x1-1, y1-1, fill=color, outline="#ddd")
+                rect = canvas.create_rectangle(x0+1, y0+1, x1-1, y1-1, fill=color, outline="#dddddd")
                 txt  = canvas.create_text((x0+x1)/2, (y0+y1)/2, text=letter, font=self.font_cell, fill="white")
 
-                # tooltip / click
                 def show_info(_evt=None, t=tot, u=up, s=soft):
                     a, q_stay, q_hit = self._action_for(t, u, s)
                     as_text = "SOFT" if s else "HARD"
